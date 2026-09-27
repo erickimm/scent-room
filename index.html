@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Scent room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#FFFFFF; --ink:#3A3935; --muted:#8C877D; --dot:#D6CFC2; --dot-on:#C8914A; --pop:#FBF9F5;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+*,*::before,*::after{box-sizing:inherit}
+html,body{height:100%;margin:0;background:#FFFFFF;color-scheme:light}
+body{background:var(--paper);color:var(--ink);font-family:"Newsreader",Georgia,"Times New Roman",serif;overflow:hidden;-webkit-font-smoothing:antialiased}
+canvas{position:fixed;inset:0;width:100%;height:100%;touch-action:none;display:block}
+header{position:fixed;top:calc(28px + env(safe-area-inset-top,0px));left:36px;right:36px;display:flex;justify-content:space-between;align-items:baseline;gap:24px;z-index:2;pointer-events:none}
+header>*{pointer-events:auto}
+.id h1{font-size:1.25rem;font-weight:500;margin:0;letter-spacing:.005em}
+.id p{margin:.2rem 0 0;font-size:.98rem;color:var(--muted);font-style:italic;max-width:34ch;line-height:1.4}
+nav{display:flex;gap:28px;font-size:1rem}
+nav a{color:var(--ink);text-decoration:none;border-bottom:1px solid transparent;padding-bottom:2px}
+nav a:hover,nav a:focus-visible{border-bottom-color:currentColor;outline:none}
+.say{position:fixed;transform:translate(-50%,-100%);font-size:.82rem;font-style:italic;color:#5E5A53;background:rgba(255,255,255,0.88);padding:1px 8px 2px;border-radius:9px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:2;white-space:nowrap}
+.say.show{opacity:1}
+#tubeBtn{position:fixed;transform:translate(-50%,-100%);background:transparent;border:0;border-radius:24px;cursor:pointer;z-index:2}
+#tubeBtn:focus-visible{outline:1.5px dashed #F3F0EA;outline-offset:2px}
+@media (max-width:640px){
+  header{left:20px;right:20px;flex-direction:column;gap:10px}
+}
+</style>
+</head>
+<body>
+<canvas id="scene" aria-hidden="true"></canvas>
+<div id="quip" class="say">dang that stinks</div>
+<div id="catSay" class="say">gross</div>
+<div id="basketSay" class="say">it wasn’t me</div>
+
+
+<button id="tubeBtn" aria-label="Tip over the test tube"></button>
+
+
+<script>
+(() => {
+const cvs = document.getElementById('scene');
+const ctx = cvs.getContext('2d');
+const btn = document.getElementById('tubeBtn');
+const quip = document.getElementById('quip');
+const catSay = document.getElementById('catSay');
+const basketSay = document.getElementById('basketSay');
+let wilt = 0, guilty = 0, BX = 0, BY = 0;
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const clamp = (v,a,b) => v<a?a:v>b?b:v;
+
+let W, H, dpr, S = 1;
+const F = {x:0,y:0,w:0,h:0};      // room
+let TT = 0, TX = 0, TR = 0;        // table top y, tube pivot x, table right edge
+let potX = 0, potY = 0;
+let roomImg = null; const PAD = 26;
+let stain, sctx, sprigs = [], parts = [];
+
+const P = {x:-999,y:-999,px:-999,py:-999,spd:0,active:false};
+let tipped = false, tipT = 0, landT = -1, liq = 1, pud = 0, everClicked = false, hover = false;
+let adapt = 0, stillT = 0, pullUntil = 0;
+
+/* ---------- noise ---------- */
+function makeNoise(seed){
+  const N = 256, g = new Float32Array(N*N); let s = seed;
+  for (let i=0;i<N*N;i++){ s = (s*16807) % 2147483647; g[i] = s/2147483647; }
+  return (x,y) => {
+    const xi = Math.floor(x), yi = Math.floor(y), xf = x-xi, yf = y-yi;
+    const u = xf*xf*(3-2*xf), v = yf*yf*(3-2*yf);
+    const x0 = xi&255, x1 = (xi+1)&255, y0 = (yi&255)*N, y1 = ((yi+1)&255)*N;
+    const a = g[y0+x0], b = g[y0+x1], c = g[y1+x0], d = g[y1+x1];
+    return a + (b-a)*u + (c-a)*v + (a-b-c+d)*u*v;
+  };
+}
+
+/* ---------- the room, baked once as a grainy image ---------- */
+const C = {
+  wall:[[36,66,54],[64,98,80]], floor:[[24,46,38],[40,68,56]], base:[[24,46,38],[30,54,44]],
+  sky:[[166,194,210],[204,222,230]], frame:[[112,82,56],[132,98,68]],
+  screen:[[26,36,36],[44,58,56]], tv:[[60,58,54],[76,74,68]], stand:[[84,60,42],[102,74,52]], standTop:[[118,88,62],[136,102,72]],
+  top:[[160,120,84],[184,144,104]], leg:[[124,92,64],[146,110,78]]
+};
+function buildRoom(){
+  const sc = dpr;
+  const w = Math.round((F.w+PAD*2)*sc), h = Math.round((F.h+PAD*2)*sc);
+  const oc = document.createElement('canvas'); oc.width = w; oc.height = h;
+  const o = oc.getContext('2d'); const img = o.createImageData(w,h); const d = img.data;
+  const n = makeNoise(7), e = makeNoise(31);
+  const rw = F.w*sc, rh = F.h*sc, ox = PAD*sc, oy = PAD*sc;
+  const hw = rw/2, hh = rh/2, cx = w/2, cy = h/2;
+  const r = Math.min(F.w,F.h)*0.1*sc, edge = 30*sc, fs = 1/(150*sc);
+  const inR = (u,v,a,b,c,dd) => u>=a && u<=b && v>=c && v<=dd;
+  for (let y=0;y<h;y++){
+    for (let x=0;x<w;x++){
+      const qx = Math.abs(x-cx)-(hw-r), qy = Math.abs(y-cy)-(hh-r);
+      let sd = Math.hypot(Math.max(qx,0),Math.max(qy,0)) + Math.min(Math.max(qx,qy),0) - r;
+      sd += (e(x/(60*sc), y/(60*sc)) - 0.5)*14*sc;
+      const a = clamp(-sd/edge + 0.5 + (Math.random()-0.5)*0.35, 0, 1);
+      if (a <= 0) continue;
+      const u = (x-ox)/rw, v = (y-oy)/rh;
+      const fl = 0.62 + (e(x/(90*sc),3.3)-0.5)*0.01;
+      let pal, lift = 0;
+      if (inR(u,v,.34,.66,.58,.605)) pal = C.top;
+      else if (v>.605 && v<.9 && (inR(u,v,.36,.38,0,1) || inR(u,v,.62,.64,0,1))) pal = C.leg;
+      else if (inR(u,v,.70,.90,.50,.522)) pal = C.standTop;
+      else if (inR(u,v,.705,.895,.522,.655)){
+        pal = C.stand;
+        if (Math.abs(u-.80) < .0018 || Math.abs(v-.59) < .003) lift -= 20;
+        if (inR(u,v,.745,.765,.55,.558) || inR(u,v,.835,.855,.55,.558)) lift += 26;
+      }
+      else if (inR(u,v,.12,.32,.12,.42)){
+        const bar = Math.abs(u-.22)<.004 || Math.abs(v-.27)<.006 || u<.126 || u>.314 || v<.13 || v>.41;
+        pal = bar ? C.frame : C.sky;
+      }
+      else if (inR(u,v,.105,.335,.42,.438)) pal = C.frame;
+      else if (v < fl-.018) pal = C.wall;
+      else if (v < fl) pal = C.base;
+      else {
+        pal = C.floor;
+        const sh = Math.pow((u-.5)/.19,2) + Math.pow((v-.905)/.022,2);
+        if (sh < 1) lift -= 16*(1-sh);
+        const sh2 = Math.pow((u-.8)/.11,2) + Math.pow((v-.662)/.012,2);
+        if (sh2 < 1) lift -= 18*(1-sh2);
+        if (v > .66 && v < .88){
+          const l = .12 + (v-.66)*0.7, rr = l + .22;
+          const k = Math.min(u-l, rr-u, v-.66, .88-v);
+          if (k > 0) lift += 20*clamp(k/.02,0,1);
+        }
+      }
+      const t = n(x*fs,y*fs)*0.65 + n(x*fs*2.4+40,y*fs*2.4+11)*0.35;
+      const m = clamp((t-0.3)/0.45,0,1), mm = m*m*(3-2*m);
+      let g = (Math.random()-0.5)*28 + lift; if (Math.random()<0.012) g += 24;
+      const i = (y*w+x)*4, A = pal[0], B = pal[1];
+      d[i]   = A[0]+(B[0]-A[0])*mm+g;
+      d[i+1] = A[1]+(B[1]-A[1])*mm+g;
+      d[i+2] = A[2]+(B[2]-A[2])*mm+g;
+      d[i+3] = a*255;
+    }
+  }
+  o.putImageData(img,0,0);
+  roomImg = oc;
+}
+
+/* ---------- lavender pot on the windowsill ---------- */
+function buildSprigs(){
+  sprigs = [];
+  for (let i=0;i<7;i++){
+    sprigs.push({x:potX+(Math.random()-0.5)*8*S, y:potY-13*S, h:(22+Math.random()*22)*S,
+      lean:(i-3)*0.11+(Math.random()-0.5)*0.12, ph:Math.random()*6.28,
+      buds:5+Math.floor(Math.random()*5), hue:Math.random()<0.5?'#9C86B8':'#B4A0CE'});
+  }
+}
+const qpt = (a,c,b,t) => { const u=1-t; return u*u*a+2*u*t*c+t*t*b; };
+function mixHex(a,b,t){
+  const pa = parseInt(a.slice(1),16), pb = parseInt(b.slice(1),16);
+  const r = Math.round((pa>>16)+(((pb>>16)-(pa>>16))*t)), g = Math.round(((pa>>8)&255)+((((pb>>8)&255)-((pa>>8)&255))*t)), bl = Math.round((pa&255)+(((pb&255)-(pa&255))*t));
+  return `rgb(${r},${g},${bl})`;
+}
+function drawSprig(s,T){
+  const dir = s.lean >= 0 ? 1 : -1;
+  const sway = reduce ? 0 : Math.sin(T*0.0009+s.ph)*0.05*(1-wilt*0.7);
+  const a = s.lean + sway + dir*wilt*(0.22+Math.abs(s.lean)*0.3);   // droop outward a little
+  const h = s.h*(1-0.1*wilt);
+  const tx = s.x+Math.sin(a)*h, ty = s.y-Math.cos(a)*h + wilt*h*0.1;  // tips sag
+  const cx = s.x+Math.sin(a*0.3)*h*0.5, cy = s.y-h*0.55;
+  ctx.strokeStyle = mixHex('#76926A','#8E8A62',wilt); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.quadraticCurveTo(cx,cy,tx,ty); ctx.stroke();
+  ctx.fillStyle = mixHex(s.hue,'#8C7C86',wilt*0.5);
+  for (let k=0;k<s.buds;k++){
+    const t = 0.6 + 0.4*k/s.buds, sd = (k%2?1:-1)*1.4*S;
+    ctx.beginPath(); ctx.ellipse(qpt(s.x,cx,tx,t)+sd, qpt(s.y,cy,ty,t), 1.3*S, 2.1*S, a, 0, 6.283); ctx.fill();
+  }
+}
+function drawBasket(T){
+  ctx.save(); ctx.translate(BX, BY); ctx.scale(S*1.15,S*1.15);
+  ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.beginPath(); ctx.ellipse(0,1,34,4,0,0,6.283); ctx.fill();
+  // clothes piled above the rim
+  ctx.fillStyle = '#7E93A8'; ctx.beginPath(); ctx.ellipse(-13,-34,14,7,-0.15,0,6.283); ctx.fill();
+  ctx.fillStyle = '#B98E8A'; ctx.beginPath(); ctx.ellipse(16,-32,10,6,0.2,0,6.283); ctx.fill();
+  ctx.fillStyle = '#D9D0C1'; ctx.beginPath(); ctx.ellipse(3,-37,15,8,0.05,0,6.283); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.12)'; ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.moveTo(-6,-38); ctx.quadraticCurveTo(2,-34,10,-39); ctx.moveTo(-20,-35); ctx.lineTo(-10,-31); ctx.stroke();
+  // wicker body
+  const body = () => { ctx.beginPath(); ctx.moveTo(-30,-30); ctx.lineTo(30,-30); ctx.lineTo(25,-3); ctx.quadraticCurveTo(24.5,0,21,0); ctx.lineTo(-21,0); ctx.quadraticCurveTo(-24.5,0,-25,-3); ctx.closePath(); };
+  body(); ctx.fillStyle = '#AE8759'; ctx.fill();
+  ctx.save(); body(); ctx.clip();
+  ctx.fillStyle = 'rgba(80,52,26,0.3)';
+  for (let yy=-27; yy<0; yy+=5) ctx.fillRect(-32,yy,64,1);
+  ctx.fillStyle = 'rgba(255,230,190,0.14)';
+  for (let yy=-30, r=0; yy<0; yy+=5, r++) for (let xx=-30+(r%2)*4; xx<32; xx+=8) ctx.fillRect(xx,yy+1.3,4,2.4);
+  ctx.restore();
+  // rim and handles
+  ctx.fillStyle = '#C39D6C'; ctx.beginPath(); ctx.roundRect(-32,-33,64,6,3); ctx.fill();
+  ctx.fillStyle = 'rgba(80,52,26,0.35)'; ctx.fillRect(-31,-27.6,62,0.9);
+  ctx.fillStyle = 'rgba(40,26,14,0.6)';
+  ctx.beginPath(); ctx.ellipse(-20,-22,4,1.7,0,0,6.283); ctx.ellipse(20,-22,4,1.7,0,0,6.283); ctx.fill();
+  // the sock hanging over the front
+  const sw = reduce ? 0 : guilty*Math.sin(T*0.02)*0.12;
+  ctx.save(); ctx.translate(8,-31); ctx.rotate(sw);
+  ctx.strokeStyle = '#E6E0D4'; ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0.5,15); ctx.quadraticCurveTo(1,19,6,19.5); ctx.stroke();
+  ctx.strokeStyle = '#A5564E'; ctx.lineWidth = 5.2; ctx.lineCap = 'butt';
+  ctx.beginPath(); ctx.moveTo(0.1,3); ctx.lineTo(0.2,5); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(6,17.2); ctx.lineTo(7.5,17.2); ctx.lineTo(7.5,21.8); ctx.lineTo(6,21.8); ctx.fillStyle = '#A5564E'; ctx.fill();
+  ctx.restore();
+  ctx.restore();
+}
+function drawPot(){
+  ctx.save(); ctx.translate(potX, potY); ctx.scale(S,S);
+  ctx.fillStyle = '#E4DDD0';
+  ctx.beginPath(); ctx.moveTo(-9,-13); ctx.lineTo(9,-13); ctx.lineTo(6.5,0); ctx.lineTo(-6.5,0); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.08)'; ctx.fillRect(-9,-13,18,2.5);
+  ctx.restore();
+}
+
+/* ---------- test tube, rack, spill ---------- */
+const TL = 62;                       // tube length, bottom at local origin
+// poses: bottom-centre position (rack units, table = 0) and rotation
+const HOLE = 17;                    // tube sits in the right-hand hole
+const POSES = [ {t:0,x:HOLE,y:0,a:0}, {t:.28,x:HOLE,y:-21,a:.12}, {t:.46,x:HOLE+15,y:-25,a:.8}, {t:1,x:HOLE+33,y:-4.5,a:Math.PI/2} ];
+const eOut = u => 1-(1-u)*(1-u), eIn = u => u*u;
+function tubePose(T){
+  let x=HOLE, y=0, a=0;
+  if (tipT > 0){
+    for (let i=1;i<POSES.length;i++){
+      const A = POSES[i-1], B = POSES[i];
+      if (tipT <= B.t){
+        const u = (tipT-A.t)/(B.t-A.t);
+        if (i === 3){ x = A.x+(B.x-A.x)*eOut(u); y = A.y+(B.y-A.y)*eIn(u); a = A.a+(B.a-A.a)*eIn(u); }
+        else { const v = eOut(u); x = A.x+(B.x-A.x)*v; y = A.y+(B.y-A.y)*v; a = A.a+(B.a-A.a)*v; }
+        break;
+      }
+    }
+  }
+  if (tipped && landT > 0){
+    const k = T-landT;
+    y -= 3.5*Math.exp(-k/90)*Math.abs(Math.sin(k/45));
+    a += 0.05*Math.exp(-k/120)*Math.sin(k/35);
+  }
+  if (!reduce && tipped && tipT >= 1 && landT > 0 && T-landT > 1200){
+    if (hover){ a += Math.sin(T*0.012)*0.03; y -= Math.abs(Math.sin(T*0.012))*0.8; }
+    else { const c = (T-landT)%3200; if (c < 700){ const w = Math.sin(c/700*Math.PI*3)*(1-c/700); a += w*0.03; y -= Math.abs(w)*0.6; } }
+  }
+  if (!reduce && tipT === 0){
+    if (hover) a += Math.sin(T*0.012)*0.035;
+    else if (!everClicked && T > 2500){ const c = T%5200; if (c<700) a += Math.sin(c/700*Math.PI*4)*0.06*(1-c/700); }
+  }
+  return {x,y,a};
+}
+function mouthOf(p){ return { x: TX+(p.x+TL*Math.sin(p.a))*S, y: TT+(p.y-TL*Math.cos(p.a))*S }; }
+function mouthPos(){ return mouthOf(POSES[3]); }
+function tubePath(){
+  ctx.beginPath(); ctx.moveTo(-4.5,-TL); ctx.lineTo(-4.5,-4.5);
+  ctx.arc(0,-4.5,4.5,Math.PI,0,true); ctx.lineTo(4.5,-TL);
+}
+function rackGrain(y0,h){
+  ctx.fillStyle = 'rgba(0,0,0,0.06)';
+  for (let i=0;i<8;i++) ctx.fillRect(-24+i*6.5, y0+2+(i%3)*(h/4), 4, 1);
+}
+function drawRackBack(){
+  ctx.save(); ctx.translate(TX, TT); ctx.scale(S,S);
+  ctx.fillStyle = '#9E7550'; ctx.fillRect(-28,-18,56,18);
+  ctx.fillStyle = '#B98C62'; ctx.fillRect(-28,-18,56,3.6);
+  ctx.fillStyle = 'rgba(40,28,18,0.6)';
+  [-17,0,17].forEach(hx => { ctx.beginPath(); ctx.ellipse(hx,-16.3,5.6,1.5,0,0,6.283); ctx.fill(); });
+  ctx.restore();
+}
+function drawRackFront(){
+  ctx.save(); ctx.translate(TX, TT); ctx.scale(S,S);
+  ctx.fillStyle = '#9E7550'; ctx.fillRect(-28,-14.6,56,14.6);
+  rackGrain(-14.6,14.6);
+  // front lip of the centre hole, drawn over the tube so it sits inside
+  ctx.strokeStyle = '#B98C62'; ctx.lineWidth = 1.3;
+  ctx.beginPath(); ctx.ellipse(HOLE,-16.3,5.6,1.5,0,0,Math.PI); ctx.stroke();
+  ctx.restore();
+}
+function drawTube(p){
+  ctx.save(); ctx.translate(TX+p.x*S, TT+p.y*S); ctx.scale(S,S); ctx.rotate(p.a);
+  tubePath(); ctx.closePath(); ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fill();
+  if (liq > 0.01 && tipT < 0.3){
+    ctx.save(); tubePath(); ctx.closePath(); ctx.clip();
+    ctx.fillStyle = 'rgba(226,178,108,0.85)'; ctx.fillRect(-5,-32*liq,10,32*liq+1);
+    ctx.fillStyle = 'rgba(255,240,210,0.6)'; ctx.fillRect(-5,-32*liq,10,1.2);
+    ctx.restore();
+  }
+  tubePath(); ctx.strokeStyle = 'rgba(120,126,140,0.75)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-6,-TL); ctx.lineTo(6,-TL); ctx.lineWidth = 1.6; ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.moveTo(-2,-TL+6); ctx.lineTo(-2,-10); ctx.stroke();
+  ctx.restore();
+}
+function puddleGeom(){
+  const m = mouthPos(), mid = F.x+F.w*0.5;
+  const L = m.x - pud*(m.x - (mid - 12*S)) - 4*S;
+  const R = Math.min(TR-4, m.x + (6 + pud*14)*S);
+  return { cx:(L+R)/2, rx:(R-L)/2, ry:(1.4+pud*1.8)*S, y: TT+0.5*S };
+}
+let drops = [], dripT = 0, floorPud = 0;
+const edgeY = () => F.y+F.h*0.605, floorY = () => F.y+F.h*0.885, midX = () => F.x+F.w*0.5;
+function updateDrips(dt,f){
+  if (tipped && pud > 0.6){
+    dripT += dt;
+    if (dripT > 1.2){ drops.push({ y: edgeY()+3*S, v: 0 }); dripT = 0; }
+  } else { dripT = 0; if (!tipped) drops = []; }
+  for (let i=drops.length-1;i>=0;i--){
+    const d = drops[i]; d.v += 0.28*f; d.y += d.v*f;
+    if (d.y >= floorY()){ drops.splice(i,1); floorPud = Math.min(1, floorPud+0.1); }
+  }
+  if (!tipped) floorPud = Math.min(floorPud, pud);
+}
+function drawDrips(){
+  const x = midX(), ey = edgeY();
+  if (floorPud > 0.01){
+    const rx = (4+floorPud*22)*S, ry = (1+floorPud*2.2)*S;
+    ctx.fillStyle = 'rgba(206,150,84,0.7)';
+    ctx.beginPath(); ctx.ellipse(x, floorY(), rx, ry, 0, 0, 6.283); ctx.fill();
+    ctx.fillStyle = 'rgba(255,236,200,0.45)';
+    ctx.beginPath(); ctx.ellipse(x-rx*0.2, floorY()-ry*0.3, rx*0.4, ry*0.35, 0, 0, 6.283); ctx.fill();
+  }
+  if (tipped && pud > 0.6){
+    ctx.fillStyle = 'rgba(206,150,84,0.85)';
+    ctx.fillRect(x-1*S, TT, 2*S, ey-TT);                         // runs over the front edge
+    const r = (1.2 + Math.min(1,dripT/1.2)*1.8)*S;               // bead swells before it lets go
+    ctx.beginPath(); ctx.ellipse(x, ey+r*0.7, r*0.8, r, 0, 0, 6.283); ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(206,150,84,0.85)';
+  for (const d of drops){ ctx.beginPath(); ctx.ellipse(x, d.y, 1.5*S, 2.6*S, 0, 0, 6.283); ctx.fill(); }
+}
+function drawPuddle(){
+  if (pud <= 0.01) return;
+  const g = puddleGeom();
+  ctx.fillStyle = 'rgba(206,150,84,0.75)';
+  ctx.beginPath(); ctx.ellipse(g.cx, g.y, g.rx, g.ry, 0, 0, 6.283); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(g.cx-g.rx*0.35, g.y+0.3, g.rx*0.55, g.ry*1.1, 0, 0, 6.283); ctx.fill();
+  ctx.fillStyle = 'rgba(255,236,200,0.55)';
+  ctx.beginPath(); ctx.ellipse(g.cx-g.rx*0.2, g.y-g.ry*0.3, g.rx*0.4, g.ry*0.35, 0, 0, 6.283); ctx.fill();
+}
+
+/* ---------- scent particles ---------- */
+const COLORS = ['rgba(236,190,120,','rgba(232,168,162,','rgba(248,236,212,'];
+function spawn(n){
+  if (pud <= 0.02) return;
+  const g = puddleGeom();
+  for (let i=0;i<n && parts.length<1500;i++){
+    parts.push({ x: g.cx+(Math.random()-0.5)*1.8*g.rx, y: TT-2,
+      vx:(Math.random()-0.5)*0.6, vy:-0.7-Math.random()*1.1,
+      age:0, max:1300+Math.random()*1000, sz:1.4+Math.random()*1.6,
+      c:Math.floor(Math.random()*3), s:Math.random()*100 });
+  }
+}
+
+/* ---------- cat on the TV stand ---------- */
+const cat = { state:'sit', x:0, y:0, t:0, sx:0, sy:0, calm:0 };
+const catHome = () => ({ x: F.x+F.w*0.868, y: F.y+F.h*0.5 });
+const runY = () => F.y+F.h*0.74;
+function scentNear(x,y){
+  let n = 0; const rx = 90*S, ry = 70*S;
+  for (const p of parts){ if (Math.abs(p.x-x) < rx && Math.abs(p.y-y) < ry && ++n > 6) break; }
+  return n;
+}
+const cursorNear = (x,y) => P.active && Math.hypot(P.x-x, P.y-y) < 110*S;
+function flee(){ cat.state = 'jump'; cat.t = 0; cat.sx = cat.x; cat.sy = cat.y; }
+function disgust(){ cat.onFloor = cat.state !== 'sit'; cat.state = 'gross'; cat.t = 0; }
+function updateCat(dt,f){
+  const home = catHome();
+  if (cat.state === 'sit'){
+    cat.x = home.x; cat.y = home.y;
+    if (cursorNear(cat.x, cat.y-16*S) && scentNear(cat.x, cat.y-16*S) > 6) disgust();
+  } else if (cat.state === 'gross'){
+    cat.t += dt;
+    if (cat.t > 2.2) flee();
+  } else if (cat.state === 'jump'){
+    cat.t = Math.min(1, cat.t+dt/0.4); const u = cat.t;
+    const ty = cat.sy === runY() ? cat.sy : runY();
+    cat.x = cat.sx + 40*S*u; cat.y = cat.sy + (ty-cat.sy)*u - Math.sin(Math.PI*u)*26*S;
+    if (u >= 1) cat.state = 'run';
+  } else if (cat.state === 'run'){
+    cat.x += 4.5*S*f;
+    if (cat.x > F.x+F.w+40*S){ cat.state = 'gone'; cat.calm = 0; }
+  } else if (cat.state === 'gone'){
+    cat.calm = (!tipped && scentNear(home.x, home.y) < 2) ? cat.calm+dt : 0;
+    if (cat.calm > 2.5){ cat.state = 'walk'; cat.x = F.x+F.w+30*S; cat.y = runY(); }
+  } else if (cat.state === 'walk'){
+    cat.x -= 1.6*S*f;
+    if (cursorNear(cat.x, cat.y-10*S) && scentNear(cat.x, cat.y-10*S) > 6) disgust();
+    else if (cat.x <= home.x+40*S){ cat.state = 'hop'; cat.t = 0; cat.sx = cat.x; cat.sy = cat.y; }
+  } else if (cat.state === 'hop'){
+    cat.t = Math.min(1, cat.t+dt/0.45); const u = cat.t;
+    cat.x = cat.sx + (home.x-cat.sx)*u; cat.y = cat.sy + (home.y-cat.sy)*u - Math.sin(Math.PI*u)*30*S;
+    if (u >= 1) cat.state = 'sit';
+  }
+}
+const FUR = '#52514E', EAR = '#8A6D69', EYE = '#8FCB6A';
+function drawCatSit(T, squint){
+  ctx.save(); ctx.translate(cat.x, cat.y); ctx.scale(S*1.1, S*1.1);
+  const sw = reduce ? 0 : Math.sin(T*0.0028)*3;
+  ctx.strokeStyle = FUR; ctx.lineWidth = 3.2; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(7,-3); ctx.quadraticCurveTo(17,-2,14+sw,-15); ctx.stroke();
+  ctx.fillStyle = FUR;
+  ctx.beginPath(); ctx.ellipse(1,-10,9,10.5,0,0,6.283); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-4,-23,6.8,6.2,0,0,6.283); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-10.5,-25); ctx.lineTo(-9.5,-33.5); ctx.lineTo(-5,-28.5); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-3,-29); ctx.lineTo(1.2,-33.5); ctx.lineTo(2.3,-24.5); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = EAR;
+  ctx.beginPath(); ctx.moveTo(-9.3,-26.5); ctx.lineTo(-8.8,-31.5); ctx.lineTo(-6.3,-28.5); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.14)';
+  ctx.beginPath(); ctx.ellipse(4,-8,5,8,0.2,0,6.283); ctx.fill();
+  ctx.fillStyle = '#65635F';
+  ctx.beginPath(); ctx.ellipse(-4.5,-0.9,2.4,1.4,0,0,6.283); ctx.ellipse(-0.5,-0.9,2.4,1.4,0,0,6.283); ctx.fill();
+  ctx.fillStyle = EYE;
+  if (!squint && T % 4300 > 160){
+    ctx.beginPath(); ctx.ellipse(-7.3,-23.5,0.9,1.3,0,0,6.283); ctx.ellipse(-3.2,-23.5,0.9,1.3,0,0,6.283); ctx.fill();
+  } else { ctx.fillRect(-8.2,-23.5,1.8,0.6); ctx.fillRect(-4.1,-23.5,1.8,0.6); }
+  ctx.restore();
+}
+function drawCatMove(T, dir, fast, tilt){
+  ctx.save(); ctx.translate(cat.x, cat.y); ctx.scale(S*1.1*dir, S*1.1); ctx.rotate(tilt||0);
+  const ph = T*(fast ? 0.035 : 0.014), bob = Math.abs(Math.sin(ph))*(fast?1.6:0.6);
+  ctx.strokeStyle = FUR; ctx.lineWidth = 2.4; ctx.lineCap = 'round';
+  const legs = [[7,1],[5,-1],[-6,-1],[-8,1]];
+  ctx.beginPath();
+  for (const [lx,sg] of legs){ ctx.moveTo(lx,-6-bob); ctx.lineTo(lx+Math.sin(ph)*sg*(fast?4:2.5), 0); }
+  ctx.stroke();
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(-10,-10-bob); ctx.quadraticCurveTo(-17,-12-bob,-20,fast?-13-bob:-19-bob); ctx.stroke();
+  ctx.fillStyle = FUR;
+  ctx.beginPath(); ctx.ellipse(0,-9.5-bob,11.5,5.8,0,0,6.283); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(11,-13.5-bob,5.6,5,0,0,6.283); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(7.5,-16-bob); ctx.lineTo(8.5,-22.5-bob); ctx.lineTo(11.5,-17.5-bob); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(12,-17.8-bob); ctx.lineTo(14.8,-22-bob); ctx.lineTo(15.8,-15-bob); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = EYE; ctx.beginPath(); ctx.ellipse(13.6,-14-bob,0.9,1.2,0,0,6.283); ctx.fill();
+  ctx.restore();
+}
+function drawCat(T){
+  if (cat.state === 'gone') return;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(F.x, F.y, F.w, F.h); ctx.clip();
+  const edge = F.x+F.w;
+  ctx.globalAlpha = clamp((edge - cat.x)/(50*S), 0, 1);
+  if (cat.state === 'sit') drawCatSit(T);
+  else if (cat.state === 'gross') cat.onFloor ? drawCatMove(0, -1, false, 0) : drawCatSit(T, true);
+  else if (cat.state === 'jump') drawCatMove(T, 1, true, (cat.t-0.5)*0.6);
+  else if (cat.state === 'run') drawCatMove(T, 1, true, 0);
+  else if (cat.state === 'walk') drawCatMove(T, -1, false, 0);
+  else drawCatMove(T, -1, false, -(cat.t-0.5)*0.6);
+  ctx.restore();
+}
+function drawTV(T){
+  const standTop = F.y+F.h*0.5;
+  const w = F.w*0.086, h = w*0.58, x0 = F.x+F.w*0.703, y1 = standTop - 6*S, y0 = y1-h;
+  const flick = reduce ? 0.5 : 0.5 + 0.5*Math.abs(Math.sin(T*0.0019)*Math.sin(T*0.0053));
+  // glow on the wall
+  const gl = ctx.createRadialGradient(x0+w/2, y0+h/2, 0, x0+w/2, y0+h/2, w*0.95);
+  gl.addColorStop(0, `rgba(150,200,220,${(0.07+0.04*flick).toFixed(3)})`); gl.addColorStop(1, 'rgba(150,200,220,0)');
+  ctx.fillStyle = gl; ctx.fillRect(x0-w*0.6, y0-h*0.8, w*2.2, h*2.6);
+  // cable from the dock to the TV
+  const dx = F.x+F.w*0.822, dockW = 15*S, dockH = 9*S, dockY = standTop-dockH;
+  ctx.strokeStyle = 'rgba(20,20,20,0.8)'; ctx.lineWidth = 1*S;
+  ctx.beginPath(); ctx.moveTo(dx-dockW/2+2*S, standTop-1.5*S); ctx.quadraticCurveTo(x0+w*0.95, standTop+0.5*S, x0+w*0.7, y1-1*S); ctx.stroke();
+  // stand foot + neck
+  ctx.fillStyle = '#1F1F1F';
+  ctx.beginPath(); ctx.roundRect(x0+w*0.34, standTop-2*S, w*0.32, 2*S, 1*S); ctx.fill();
+  ctx.fillRect(x0+w*0.47, y1-1, w*0.06, 5*S);
+  // thin bezel + screen
+  ctx.beginPath(); ctx.roundRect(x0, y0, w, h, 2*S); ctx.fill();
+  const bz = 1.6*S, sx = x0+bz, sy = y0+bz, sw = w-bz*2, sh = h-bz*2.6;
+  const sg = ctx.createLinearGradient(sx, sy, sx+sw, sy+sh);
+  sg.addColorStop(0, `rgb(${Math.round(92+20*flick)},${Math.round(150+18*flick)},176)`);
+  sg.addColorStop(1, 'rgb(40,70,96)');
+  ctx.fillStyle = sg; ctx.fillRect(sx, sy, sw, sh);
+  ctx.save(); ctx.beginPath(); ctx.rect(sx, sy, sw, sh); ctx.clip();
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
+  ctx.beginPath(); ctx.moveTo(sx+sw*0.55, sy); ctx.lineTo(sx+sw*0.8, sy); ctx.lineTo(sx+sw*0.45, sy+sh); ctx.lineTo(sx+sw*0.2, sy+sh); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = 'rgba(160,230,190,0.9)'; ctx.fillRect(x0+w/2-0.6*S, y1-bz*0.55, 1.2*S, 0.6*S);
+  // docked handheld console: tablet with a controller on each side, sitting in its dock
+  const cw = 22*S, ch = 9*S, cy = dockY - 6*S;
+  ctx.fillStyle = '#9E9C97';
+  ctx.beginPath(); ctx.roundRect(dx-cw/2-4*S, cy, 4.5*S, ch, [2.5*S,0,0,2.5*S]); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(dx+cw/2-0.5*S, cy, 4.5*S, ch, [0,2.5*S,2.5*S,0]); ctx.fill();
+  ctx.fillStyle = '#2B2B2B'; ctx.fillRect(dx-cw/2, cy, cw, ch);
+  ctx.fillStyle = '#3F4F58'; ctx.fillRect(dx-cw/2+1.5*S, cy+1.2*S, cw-3*S, ch-2*S);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath(); ctx.arc(dx-cw/2-1.8*S, cy+2.6*S, 0.9*S, 0, 6.283); ctx.arc(dx+cw/2+1.8*S, cy+5.8*S, 0.9*S, 0, 6.283); ctx.fill();
+  ctx.fillStyle = '#262626'; ctx.beginPath(); ctx.roundRect(dx-dockW/2, dockY, dockW, dockH, 1.5*S); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fillRect(dx-dockW/2+1*S, dockY+1*S, dockW-2*S, 1*S);
+}
+
+function toggle(){
+  everClicked = true;
+  tipped = !tipped; landT = -1;
+  btn.setAttribute('aria-label', tipped ? 'Stand the test tube up' : 'Tip over the test tube');
+  if (!tipped) pullUntil = performance.now() + 2600;
+}
+btn.addEventListener('click', toggle);
+
+/* ---------- layout ---------- */
+function layout(){
+  dpr = Math.min(window.devicePixelRatio||1, 2);
+  W = innerWidth; H = innerHeight;
+  cvs.width = W*dpr; cvs.height = H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+  const narrow = W < 700;
+  F.w = Math.max(280, Math.min(1040, W*0.94, (H-56)/0.6));
+  F.h = F.w*0.6; F.x = (W-F.w)/2; F.y = (H-F.h)/2;
+  S = clamp(F.w/640, 0.7, 1.8);
+  TT = F.y + F.h*0.58; TX = F.x + F.w*0.44; TR = F.x + F.w*0.66;
+  potX = F.x + F.w*0.2; potY = F.y + F.h*0.42;
+  cat.state = 'sit'; drops = [];
+  quip.style.left = potX+'px'; quip.style.top = (potY-62*S)+'px';
+  BX = F.x+F.w*0.26; BY = F.y+F.h*0.80;
+  basketSay.style.left = BX+'px'; basketSay.style.top = (BY-54*S)+'px';
+  btn.style.left = (TX+60*S)+'px'; btn.style.top = (TT+4)+'px';
+  btn.style.width = (150*S)+'px'; btn.style.height = (80*S)+'px';
+  stain = document.createElement('canvas'); stain.width = W; stain.height = H; sctx = stain.getContext('2d');
+  buildRoom(); buildSprigs();
+}
+let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(layout,150); });
+
+/* ---------- pointer ---------- */
+function setP(e){ P.x = e.clientX; P.y = e.clientY; if (!P.active){ P.px = P.x; P.py = P.y; } P.active = true; }
+addEventListener('pointermove', setP);
+addEventListener('pointerdown', setP);
+document.addEventListener('pointerleave', () => { P.active = false; });
+addEventListener('blur', () => { P.active = false; });
+
+/* ---------- loop ---------- */
+let last = performance.now(), fn = 0;
+function frame(T){
+  const dt = Math.min(0.05,(T-last)/1000); last = T; const f = dt*60; fn++;
+  const mv = Math.hypot(P.x-P.px, P.y-P.py); P.px = P.x; P.py = P.y;
+  P.spd += ((P.active ? mv/Math.max(f,0.01) : 0) - P.spd)*0.25;
+  hover = P.active && P.x > TX-10*S && P.x < TX+130*S && P.y < TT+4 && P.y > TT-76*S;
+
+  // tube motion: falls with gravity, stands up smoothly
+  if (tipped && tipT < 1){ tipT = Math.min(1, tipT+dt/0.8); if (tipT===1){ landT = T; } }
+  if (tipped && tipT >= 1) pud = Math.min(1, pud + dt/2.5);
+  if (!tipped){
+    pud = Math.max(0, pud - dt/0.9);                       // the spill flows back in first
+    if (pud === 0 && parts.length === 0 && tipT > 0) tipT = Math.max(0, tipT-dt/0.7);   // stands up once everything is back
+  }
+  liq = tipped ? Math.max(0, liq - dt*1.4*(tipT>0.6?1:0)) : Math.min(1, 1 - pud);
+  if (tipped) spawn(Math.round(pud*(reduce?2:6)*f));
+  updateDrips(dt,f);
+  updateCat(dt,f);
+  const plantScent = scentNear(potX, potY-30*S) > 4;
+  wilt = plantScent ? Math.min(1, wilt+dt/0.9) : Math.max(0, wilt-dt/1.8);
+  const onBasket = P.active && Math.abs(P.x-BX) < 40*S && P.y > BY-60*S && P.y < BY+6*S && scentNear(BX, BY-25*S) > 4;
+  guilty = onBasket ? Math.min(1, guilty+dt/0.3) : Math.max(0, guilty-dt/0.5);
+  basketSay.classList.toggle('show', onBasket);
+  const onPlant = P.active && Math.abs(P.x-potX) < 24*S && P.y > potY-60*S && P.y < potY+4
+                  && scentNear(potX, potY-30*S) > 4;
+  quip.classList.toggle('show', onPlant);
+  catSay.classList.toggle('show', cat.state === 'gross');
+  if (cat.state === 'gross'){ catSay.style.left = (cat.x - (cat.onFloor ? -8 : 4)*S)+'px'; catSay.style.top = (cat.y - (cat.onFloor ? 34 : 44)*S)+'px'; }
+  const pulling = !tipped && parts.length > 0;
+  const pose = tubePose(T), mo = mouthOf(pose), mX = mo.x, mY = mo.y;
+
+  const R = 230, still = clamp(1-P.spd/4,0,1);
+  let dens = 0;
+  for (let i=parts.length-1;i>=0;i--){
+    const p = parts[i];
+    const dx = P.x-p.x, dy = P.y-p.y, dd = Math.hypot(dx,dy)+0.001; p.dd = dd;
+    if (!pulling) p.pt = 0;
+    if (pulling){
+      // every particle eases home: slow at first, then a quick swoop into the tube
+      p.pt = (p.pt||0) + f;
+      const e = Math.min(1, (0.015 + p.pt*0.0035)*f);
+      p.x += (mX-p.x)*e; p.y += (mY-p.y)*e; p.vx = 0; p.vy = 0;
+      if (p.age > p.max-40) p.age = p.max-40;
+      if (Math.hypot(mX-p.x, mY-p.y) < 10*S){ parts.splice(i,1); }
+      continue;
+    } else if (P.active && dd < R){
+      const k = 1-dd/R;
+      const pull = 0.05*Math.min(1, dd/60);
+      p.vx += (dx/dd*pull - dy/dd*0.006 + (Math.random()-0.5)*0.06)*still*k*f;
+      p.vy += (dy/dd*pull + dx/dd*0.006 + (Math.random()-0.5)*0.06)*still*k*f;
+      if (dd < 120) dens++;
+      if (P.spd > 6 && dd < 120){
+        const push = (P.spd-6)*0.035*(1-dd/120);
+        p.vx -= (dx/dd + (Math.random()-0.5)*1.4)*push*f;
+        p.vy -= (dy/dd + (Math.random()-0.5)*1.4)*push*f;
+      }
+    }
+    const amb = reduce ? 0.5 : 1;
+    p.vx += Math.sin(p.y*0.006 + T*0.0004 + p.s)*0.012*amb*f;
+    p.vy += (Math.cos(p.x*0.005 - T*0.0003 + p.s)*0.01*amb - 0.004)*f;
+    if (p.y < F.y+16) p.vy += 0.03*f;
+    if (p.y > F.y+F.h-16) p.vy -= 0.03*f;
+    if (p.x < F.x+16) p.vx += 0.03*f;
+    if (p.x > F.x+F.w-16) p.vx -= 0.03*f;
+    const damp = Math.pow(0.965,f); p.vx *= damp; p.vy *= damp;
+    p.x += p.vx*f; p.y += p.vy*f; p.age += f;
+    if (p.age > p.max){ parts.splice(i,1); continue; }
+    if ((i+fn)%5===0 && Math.abs(p.vx)+Math.abs(p.vy) < 0.8 && !(P.active && dd < 200)){
+      sctx.fillStyle = 'rgba(238,200,146,0.06)'; sctx.fillRect(p.x|0,p.y|0,1,1);
+    }
+  }
+
+  if (P.spd > 2.5) stillT = 0;
+  else if (P.spd < 1.5 && dens > 20) stillT = Math.min(3, stillT+dt);
+  else stillT = Math.max(0, stillT-dt*3);
+  adapt = stillT > 2 ? Math.min(1, adapt+dt/1.4) : Math.max(0, adapt-dt/0.35);
+
+  if (fn % 20 === 0){
+    sctx.globalCompositeOperation = 'destination-out';
+    sctx.fillStyle = 'rgba(0,0,0,0.12)'; sctx.fillRect(0,0,W,H);
+    sctx.globalCompositeOperation = 'source-over';
+  }
+
+  /* draw */
+  ctx.clearRect(0,0,W,H);
+  ctx.drawImage(roomImg, F.x-PAD, F.y-PAD, F.w+PAD*2, F.h+PAD*2);
+  ctx.drawImage(stain,0,0,W,H);
+  for (const s of sprigs) drawSprig(s,T);
+  drawPot();
+  drawBasket(T);
+  drawTV(T);
+  drawCat(T);
+  drawPuddle();
+  drawDrips();
+  drawRackBack(); drawTube(pose); drawRackFront();
+  for (const p of parts){
+    let a = Math.min(1,p.age/30) * Math.pow(1-p.age/p.max,0.7) * 0.85;
+    if (adapt > 0){ const near = p.dd < 170 ? 1 : Math.max(0, 1-(p.dd-170)/80); a *= 1 - adapt*near; }
+    if (a < 0.01) continue;
+    ctx.fillStyle = COLORS[p.c]+a.toFixed(3)+')';
+    ctx.fillRect(p.x,p.y,p.sz,p.sz);
+  }
+  requestAnimationFrame(frame);
+}
+
+layout();
+requestAnimationFrame(t => { last = t; frame(t); });
+})();
+</script>
+</body>
+</html>
