@@ -17,7 +17,7 @@
 *,*::before,*::after{box-sizing:inherit}
 html,body{height:100%;margin:0;background:#FFFFFF;color-scheme:light}
 body{background:var(--paper);color:var(--ink);font-family:"Newsreader",Georgia,"Times New Roman",serif;overflow:hidden;-webkit-font-smoothing:antialiased}
-canvas{position:fixed;inset:0;width:100%;height:100%;touch-action:none;display:block}
+canvas{position:fixed;inset:0;width:100%;height:100%;touch-action:pan-y;display:block}
 header{position:fixed;top:calc(28px + env(safe-area-inset-top,0px));left:36px;right:36px;display:flex;justify-content:space-between;align-items:baseline;gap:24px;z-index:2;pointer-events:none}
 header>*{pointer-events:auto}
 .id h1{font-size:1.25rem;font-weight:500;margin:0;letter-spacing:.005em}
@@ -56,7 +56,7 @@ let wilt = 0, guilty = 0, BX = 0, BY = 0;
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const clamp = (v,a,b) => v<a?a:v>b?b:v;
 
-let W, H, dpr, S = 1;
+let W, H, dpr, S = 1, K = 1;   // K: scene size relative to the desktop design
 const F = {x:0,y:0,w:0,h:0};      // room
 let TT = 0, TX = 0, TR = 0;        // table top y, tube pivot x, table right edge
 let potX = 0, potY = 0;
@@ -510,6 +510,7 @@ function layout(){
   F.w = Math.max(280, Math.min(1040, W*0.94, (H-56)/0.6));
   F.h = F.w*0.6; F.x = (W-F.w)/2; F.y = (H-F.h)/2;
   S = clamp(F.w/640, 0.7, 1.8);
+  K = clamp(F.w/1000, 0.35, 1.1);
   TT = F.y + F.h*0.58; TX = F.x + F.w*0.44; TR = F.x + F.w*0.66;
   potX = F.x + F.w*0.2; potY = F.y + F.h*0.42;
   cat.state = 'sit'; drops = [];
@@ -528,6 +529,8 @@ function setP(e){ P.x = e.clientX; P.y = e.clientY; if (!P.active){ P.px = P.x; 
 addEventListener('pointermove', setP);
 addEventListener('pointerdown', setP);
 document.addEventListener('pointerleave', () => { P.active = false; });
+addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') P.active = false; });
+addEventListener('pointercancel', () => { P.active = false; });
 addEventListener('blur', () => { P.active = false; });
 
 /* ---------- loop ---------- */
@@ -535,7 +538,7 @@ let last = performance.now(), fn = 0;
 function frame(T){
   const dt = Math.min(0.05,(T-last)/1000); last = T; const f = dt*60; fn++;
   const mv = Math.hypot(P.x-P.px, P.y-P.py); P.px = P.x; P.py = P.y;
-  P.spd += ((P.active ? mv/Math.max(f,0.01) : 0) - P.spd)*0.25;
+  P.spd += ((P.active ? mv/Math.max(f,0.01)/K : 0) - P.spd)*0.25;
   hover = P.active && P.x > TX-10*S && P.x < TX+130*S && P.y < TT+4 && P.y > TT-76*S;
 
   // tube motion: falls with gravity, stands up smoothly
@@ -546,7 +549,7 @@ function frame(T){
     if (pud === 0 && parts.length === 0 && tipT > 0) tipT = Math.max(0, tipT-dt/0.7);   // stands up once everything is back
   }
   liq = tipped ? Math.max(0, liq - dt*1.4*(tipT>0.6?1:0)) : Math.min(1, 1 - pud);
-  if (tipped) spawn(Math.round(pud*(reduce?2:6)*f));
+  if (tipped) spawn(Math.round(pud*(reduce?2:6)*f*Math.max(0.45,K)));
   updateDrips(dt,f);
   updateCat(dt,f);
   const plantScent = scentNear(potX, potY-30*S) > 4;
@@ -562,7 +565,7 @@ function frame(T){
   const pulling = !tipped && parts.length > 0;
   const pose = tubePose(T), mo = mouthOf(pose), mX = mo.x, mY = mo.y;
 
-  const R = 230, still = clamp(1-P.spd/4,0,1);
+  const R = 230*K, still = clamp(1-P.spd/4,0,1), N120 = 120*K;
   let dens = 0;
   for (let i=parts.length-1;i>=0;i--){
     const p = parts[i];
@@ -578,19 +581,19 @@ function frame(T){
       continue;
     } else if (P.active && dd < R){
       const k = 1-dd/R;
-      const pull = 0.05*Math.min(1, dd/60);
-      p.vx += (dx/dd*pull - dy/dd*0.006 + (Math.random()-0.5)*0.06)*still*k*f;
-      p.vy += (dy/dd*pull + dx/dd*0.006 + (Math.random()-0.5)*0.06)*still*k*f;
-      if (dd < 120) dens++;
-      if (P.spd > 6 && dd < 120){
-        const push = (P.spd-6)*0.035*(1-dd/120);
+      const pull = 0.05*K*Math.min(1, dd/(60*K));
+      p.vx += (dx/dd*pull - dy/dd*0.006*K + (Math.random()-0.5)*0.06*K)*still*k*f;
+      p.vy += (dy/dd*pull + dx/dd*0.006*K + (Math.random()-0.5)*0.06*K)*still*k*f;
+      if (dd < N120) dens++;
+      if (P.spd > 6 && dd < N120){
+        const push = (P.spd-6)*0.035*K*(1-dd/N120);
         p.vx -= (dx/dd + (Math.random()-0.5)*1.4)*push*f;
         p.vy -= (dy/dd + (Math.random()-0.5)*1.4)*push*f;
       }
     }
     const amb = reduce ? 0.5 : 1;
-    p.vx += Math.sin(p.y*0.006 + T*0.0004 + p.s)*0.012*amb*f;
-    p.vy += (Math.cos(p.x*0.005 - T*0.0003 + p.s)*0.01*amb - 0.004)*f;
+    p.vx += Math.sin(p.y*0.006/K + T*0.0004 + p.s)*0.012*amb*K*f;
+    p.vy += (Math.cos(p.x*0.005/K - T*0.0003 + p.s)*0.01*amb - 0.004)*K*f;
     if (p.y < F.y+16) p.vy += 0.03*f;
     if (p.y > F.y+F.h-16) p.vy -= 0.03*f;
     if (p.x < F.x+16) p.vx += 0.03*f;
@@ -598,7 +601,7 @@ function frame(T){
     const damp = Math.pow(0.965,f); p.vx *= damp; p.vy *= damp;
     p.x += p.vx*f; p.y += p.vy*f; p.age += f;
     if (p.age > p.max){ parts.splice(i,1); continue; }
-    if ((i+fn)%5===0 && Math.abs(p.vx)+Math.abs(p.vy) < 0.8 && !(P.active && dd < 200)){
+    if ((i+fn)%5===0 && Math.abs(p.vx)+Math.abs(p.vy) < 0.8 && !(P.active && dd < 200*K)){
       sctx.fillStyle = 'rgba(238,200,146,0.06)'; sctx.fillRect(p.x|0,p.y|0,1,1);
     }
   }
@@ -628,10 +631,10 @@ function frame(T){
   drawRackBack(); drawTube(pose); drawRackFront();
   for (const p of parts){
     let a = Math.min(1,p.age/30) * Math.pow(1-p.age/p.max,0.7) * 0.85;
-    if (adapt > 0){ const near = p.dd < 170 ? 1 : Math.max(0, 1-(p.dd-170)/80); a *= 1 - adapt*near; }
+    if (adapt > 0){ const near = p.dd < 170*K ? 1 : Math.max(0, 1-(p.dd-170*K)/(80*K)); a *= 1 - adapt*near; }
     if (a < 0.01) continue;
     ctx.fillStyle = COLORS[p.c]+a.toFixed(3)+')';
-    ctx.fillRect(p.x,p.y,p.sz,p.sz);
+    ctx.fillRect(p.x,p.y,p.sz*Math.max(0.65,K),p.sz*Math.max(0.65,K));
   }
   requestAnimationFrame(frame);
 }
