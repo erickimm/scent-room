@@ -6,7 +6,7 @@
 <title>Scent room</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
 :root{
   --paper:#FFFFFF; --ink:#3A3935; --muted:#8C877D; --dot:#D6CFC2; --dot-on:#C8914A; --pop:#FBF9F5;
@@ -17,7 +17,7 @@
 *,*::before,*::after{box-sizing:inherit}
 html,body{height:100%;margin:0;background:#FFFFFF;color-scheme:light}
 body{background:var(--paper);color:var(--ink);font-family:"Newsreader",Georgia,"Times New Roman",serif;overflow:hidden;-webkit-font-smoothing:antialiased}
-canvas{position:fixed;inset:0;width:100%;height:100%;touch-action:pan-y;display:block}
+canvas{opacity:0;transition:opacity .5s ease;position:fixed;inset:0;width:100%;height:100%;touch-action:pan-y;display:block}
 header{position:fixed;top:calc(28px + env(safe-area-inset-top,0px));left:36px;right:36px;display:flex;justify-content:space-between;align-items:baseline;gap:24px;z-index:2;pointer-events:none}
 header>*{pointer-events:auto}
 .id h1{font-size:1.25rem;font-weight:500;margin:0;letter-spacing:.005em}
@@ -88,7 +88,7 @@ const C = {
   top:[[160,120,84],[184,144,104]], leg:[[124,92,64],[146,110,78]]
 };
 function buildRoom(){
-  const sc = dpr;
+  const sc = 1;   // generated at 1x and scaled up: much faster start on retina screens
   const w = Math.round((F.w+PAD*2)*sc), h = Math.round((F.h+PAD*2)*sc);
   const oc = document.createElement('canvas'); oc.width = w; oc.height = h;
   const o = oc.getContext('2d'); const img = o.createImageData(w,h); const d = img.data;
@@ -97,15 +97,18 @@ function buildRoom(){
   const hw = rw/2, hh = rh/2, cx = w/2, cy = h/2;
   const r = Math.min(F.w,F.h)*0.1*sc, edge = 30*sc, fs = 1/(150*sc);
   const inR = (u,v,a,b,c,dd) => u>=a && u<=b && v>=c && v<=dd;
+  const flRow = new Float32Array(w), tRow = new Float32Array(w);
+  for (let x=0;x<w;x++) flRow[x] = 0.62 + (e(x/(90*sc),3.3)-0.5)*0.01;
   for (let y=0;y<h;y++){
+    if ((y & 1) === 0) for (let x=0;x<w;x+=2){ const t = n(x*fs,y*fs)*0.65 + n(x*fs*2.4+40,y*fs*2.4+11)*0.35; tRow[x] = t; if (x+1<w) tRow[x+1] = t; }
     for (let x=0;x<w;x++){
       const qx = Math.abs(x-cx)-(hw-r), qy = Math.abs(y-cy)-(hh-r);
       let sd = Math.hypot(Math.max(qx,0),Math.max(qy,0)) + Math.min(Math.max(qx,qy),0) - r;
-      sd += (e(x/(60*sc), y/(60*sc)) - 0.5)*14*sc;
+      if (sd > -edge*1.5) sd += (e(x/(60*sc), y/(60*sc)) - 0.5)*14*sc;
       const a = clamp(-sd/edge + 0.5 + (Math.random()-0.5)*0.35, 0, 1);
       if (a <= 0) continue;
       const u = (x-ox)/rw, v = (y-oy)/rh;
-      const fl = 0.62 + (e(x/(90*sc),3.3)-0.5)*0.01;
+      const fl = flRow[x];
       let pal, lift = 0;
       if (inR(u,v,.34,.66,.58,.605)) pal = C.top;
       else if (v>.605 && v<.9 && (inR(u,v,.36,.38,0,1) || inR(u,v,.62,.64,0,1))) pal = C.leg;
@@ -134,7 +137,7 @@ function buildRoom(){
           if (k > 0) lift += 20*clamp(k/.02,0,1);
         }
       }
-      const t = n(x*fs,y*fs)*0.65 + n(x*fs*2.4+40,y*fs*2.4+11)*0.35;
+      const t = tRow[x];
       const m = clamp((t-0.3)/0.45,0,1), mm = m*m*(3-2*m);
       let g = (Math.random()-0.5)*28 + lift; if (Math.random()<0.012) g += 24;
       const i = (y*w+x)*4, A = pal[0], B = pal[1];
@@ -522,7 +525,7 @@ function layout(){
   stain = document.createElement('canvas'); stain.width = W; stain.height = H; sctx = stain.getContext('2d');
   buildRoom(); buildSprigs();
 }
-let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(layout,150); });
+let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { if (innerWidth !== W || innerHeight !== H) layout(); }, 150); });
 
 /* ---------- pointer ---------- */
 function setP(e){ P.x = e.clientX; P.y = e.clientY; if (!P.active){ P.px = P.x; P.py = P.y; } P.active = true; }
@@ -643,7 +646,7 @@ function step(T){
 }
 
 layout();
-requestAnimationFrame(t => { last = t; frame(t); });
+requestAnimationFrame(t => { last = t; frame(t); cvs.style.opacity = 1; });
 })();
 </script>
 </body>
