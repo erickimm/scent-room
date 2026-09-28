@@ -299,8 +299,8 @@ function drawTube(p){
 function puddleGeom(){
   const m = mouthPos(), mid = F.x+F.w*0.5;
   const L = m.x - pud*(m.x - (mid - 12*S)) - 4*S;
-  const R = Math.min(TR-4, m.x + (6 + pud*14)*S);
-  return { cx:(L+R)/2, rx:(R-L)/2, ry:(1.4+pud*1.8)*S, y: TT+0.5*S };
+  const R = Math.max(L + 2, Math.min(TR-4, m.x + (6 + pud*14)*S));
+  return { cx:(L+R)/2, rx:Math.max(1,(R-L)/2), ry:(1.4+pud*1.8)*S, y: TT+0.5*S };
 }
 let drops = [], dripT = 0, floorPud = 0;
 const edgeY = () => F.y+F.h*0.605, floorY = () => F.y+F.h*0.885, midX = () => F.x+F.w*0.5;
@@ -509,7 +509,7 @@ function layout(){
   const narrow = W < 700;
   F.w = Math.max(280, Math.min(1040, W*0.94, (H-56)/0.6));
   F.h = F.w*0.6; F.x = (W-F.w)/2; F.y = (H-F.h)/2;
-  S = clamp(F.w/640, 0.7, 1.8);
+  S = clamp(F.w/640, 0.35, 1.8);
   K = clamp(F.w/1000, 0.35, 1.1);
   TT = F.y + F.h*0.58; TX = F.x + F.w*0.44; TR = F.x + F.w*0.66;
   potX = F.x + F.w*0.2; potY = F.y + F.h*0.42;
@@ -536,6 +536,10 @@ addEventListener('blur', () => { P.active = false; });
 /* ---------- loop ---------- */
 let last = performance.now(), fn = 0;
 function frame(T){
+  requestAnimationFrame(frame);
+  try { step(T); } catch (err) { console.warn('frame skipped:', err); }
+}
+function step(T){
   const dt = Math.min(0.05,(T-last)/1000); last = T; const f = dt*60; fn++;
   const mv = Math.hypot(P.x-P.px, P.y-P.py); P.px = P.x; P.py = P.y;
   P.spd += ((P.active ? mv/Math.max(f,0.01)/K : 0) - P.spd)*0.25;
@@ -636,7 +640,6 @@ function frame(T){
     ctx.fillStyle = COLORS[p.c]+a.toFixed(3)+')';
     ctx.fillRect(p.x,p.y,p.sz*Math.max(0.65,K),p.sz*Math.max(0.65,K));
   }
-  requestAnimationFrame(frame);
 }
 
 layout();
