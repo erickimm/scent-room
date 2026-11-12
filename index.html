@@ -40,6 +40,8 @@ nav a:hover,nav a:focus-visible{border-bottom-color:currentColor;outline:none}
 @media (hover:none) and (pointer:coarse){
   #hintRing{display:block}
   html,body,canvas,#touchZone,#tubeBtn{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+  html,body,canvas{touch-action:none;overscroll-behavior:none}   /* nothing inside the embed scrolls the page */
+  html,body{overscroll-behavior:none}
 }
 @media (prefers-reduced-motion:reduce){ #hintRing{animation:none;opacity:.8} }
 </style>
@@ -557,8 +559,8 @@ function layout(){
     hintText.style.left = tubeX+'px'; hintText.style.top = (TT-74*S)+'px';
     if (!everClicked) hintText.classList.add('show');
     touchZone.style.display = 'block';   // touching the room never scrolls the page
-    touchZone.style.left = Math.max(0, F.x)+'px'; touchZone.style.top = F.y+'px';
-    touchZone.style.width = Math.min(W, F.w)+'px'; touchZone.style.height = F.h+'px';
+    touchZone.style.left = '0px'; touchZone.style.top = '0px';   // the whole embed
+    touchZone.style.width = W+'px'; touchZone.style.height = H+'px';
     btn.style.width = (190*S)+'px'; btn.style.height = (110*S)+'px';   // bigger tap target
   }
   stain = document.createElement('canvas'); stain.width = W; stain.height = H; sctx = stain.getContext('2d');
@@ -573,6 +575,10 @@ touchZone.addEventListener('pointermove', () => { if (!dragged){ dragged = true;
 touchZone.addEventListener('touchstart', e => e.preventDefault(), { passive:false });   // no text selection
 touchZone.addEventListener('touchmove', e => e.preventDefault(), { passive:false });    // no page scroll
 touchZone.addEventListener('contextmenu', e => e.preventDefault());
+if (isTouch){   // touch screens: nothing inside the embed scrolls the page
+  document.addEventListener('touchstart', e => { if (e.target !== btn) e.preventDefault(); }, { passive:false });
+  document.addEventListener('touchmove', e => e.preventDefault(), { passive:false });
+}
 addEventListener('pointerdown', setP);
 document.addEventListener('pointerleave', () => { P.active = false; });
 addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') P.active = false; });
@@ -615,7 +621,7 @@ function step(T){
   const pulling = !tipped && parts.length > 0;
   const pose = tubePose(T), mo = mouthOf(pose), mX = mo.x, mY = mo.y;
 
-  const R = 230*K, still = clamp(1-P.spd/4,0,1), N120 = 120*K;
+  const R = 230*K*(isTouch?1.4:1), still = isTouch ? 1 : clamp(1-P.spd/9,0.4,1), N120 = 120*K;   // touch: smell keeps following a moving finger
   let dens = 0;
   for (let i=parts.length-1;i>=0;i--){
     const p = parts[i];
@@ -631,12 +637,12 @@ function step(T){
       continue;
     } else if (P.active && dd < R){
       const k = 1-dd/R;
-      const pull = 0.05*K*Math.min(1, dd/(60*K));
+      const pull = (isTouch ? 0.19 : 0.085)*K*Math.min(1, dd/(60*K));   // touch: stronger pull
       p.vx += (dx/dd*pull - dy/dd*0.006*K + (Math.random()-0.5)*0.06*K)*still*k*f;
       p.vy += (dy/dd*pull + dx/dd*0.006*K + (Math.random()-0.5)*0.06*K)*still*k*f;
       if (dd < N120) dens++;
-      if (P.spd > 6 && dd < N120){
-        const push = (P.spd-6)*0.035*K*(1-dd/N120);
+      if (!isTouch && P.spd > 12 && dd < N120){   // desktop: only a quick flick scatters it   // touch: don't scatter the smell when the finger moves fast
+        const push = (P.spd-12)*0.035*K*(1-dd/N120);
         p.vx -= (dx/dd + (Math.random()-0.5)*1.4)*push*f;
         p.vy -= (dy/dd + (Math.random()-0.5)*1.4)*push*f;
       }
