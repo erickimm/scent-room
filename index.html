@@ -114,7 +114,7 @@ function buildRoom(){
   const n = makeNoise(7), e = makeNoise(31);
   const rw = F.w*sc, rh = F.h*sc, ox = PAD*sc, oy = PAD*sc;
   let L = ox, Rr = ox+rw;
-  if (phone){ L = Math.max(L, (4 - F.x + PAD)*sc); Rr = Math.min(Rr, (W - 4 - F.x + PAD)*sc); }   // phone: grainy fade at the screen edges, like the top and bottom
+  if (phone){ L = Math.max(L, (PAD*2+2 - F.x)*sc); Rr = Math.min(Rr, (W - 2 - F.x)*sc); }   // phone: full grainy fade at the screen edges, like the top and bottom
   const hw = (Rr-L)/2, hh = rh/2, cx = (L+Rr)/2, cy = h/2;
   const r = Math.min(F.w,F.h)*0.1*sc, edge = 30*sc, fs = 1/(150*sc);
   const inR = (u,v,a,b,c,dd) => u>=a && u<=b && v>=c && v<=dd;
@@ -524,7 +524,6 @@ function toggle(){
   if (!tipped) pullUntil = performance.now() + 2600;
   if (isTouch){
     hintRing.classList.add('gone');
-    touchZone.style.display = tipped ? 'block' : 'none';   // only stop page scrolling while there's smell to drag
     hintText.textContent = 'drag the smell around';
     hintText.classList.toggle('show', tipped && !dragged);
   }
@@ -538,10 +537,10 @@ function layout(){
   cvs.width = W*dpr; cvs.height = H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
   const narrow = W < 700;
   phone = isTouch && narrow && H > W;   // portrait phone only
-  F.w = phone ? Math.min(1040, W*1.15, (H-56)/0.6)
+  F.w = phone ? Math.min(1040, W*1.08, (H-56)/0.6)
               : Math.max(280, Math.min(1040, W*0.94, (H-56)/0.6));
   F.h = F.w*0.6; F.y = (H-F.h)/2;
-  F.x = phone ? W/2 - F.w*0.54 : (W-F.w)/2;   // phone: zoom in, keep plant, table and cat in view
+  F.x = phone ? W/2 - F.w*0.53 : (W-F.w)/2;   // phone: zoom in, keep plant, table and cat in view
   S = clamp(F.w/640, 0.35, 1.8);
   K = clamp(F.w/1000, 0.35, 1.1);
   TT = F.y + F.h*0.58; TX = F.x + F.w*0.44; TR = F.x + F.w*0.66;
@@ -557,6 +556,7 @@ function layout(){
     hintRing.style.left = tubeX+'px'; hintRing.style.top = (TT-31*S)+'px';
     hintText.style.left = tubeX+'px'; hintText.style.top = (TT-74*S)+'px';
     if (!everClicked) hintText.classList.add('show');
+    touchZone.style.display = 'block';   // touching the room never scrolls the page
     touchZone.style.left = Math.max(0, F.x)+'px'; touchZone.style.top = F.y+'px';
     touchZone.style.width = Math.min(W, F.w)+'px'; touchZone.style.height = F.h+'px';
     btn.style.width = (190*S)+'px'; btn.style.height = (110*S)+'px';   // bigger tap target
@@ -570,7 +570,8 @@ let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() 
 function setP(e){ P.x = e.clientX; P.y = e.clientY; if (!P.active){ P.px = P.x; P.py = P.y; } P.active = true; }
 addEventListener('pointermove', setP);
 touchZone.addEventListener('pointermove', () => { if (!dragged){ dragged = true; hintText.classList.remove('show'); } });
-touchZone.addEventListener('touchstart', e => e.preventDefault(), { passive:false });   // no text selection while dragging
+touchZone.addEventListener('touchstart', e => e.preventDefault(), { passive:false });   // no text selection
+touchZone.addEventListener('touchmove', e => e.preventDefault(), { passive:false });    // no page scroll
 touchZone.addEventListener('contextmenu', e => e.preventDefault());
 addEventListener('pointerdown', setP);
 document.addEventListener('pointerleave', () => { P.active = false; });
