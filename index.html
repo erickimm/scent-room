@@ -32,6 +32,13 @@ nav a:hover,nav a:focus-visible{border-bottom-color:currentColor;outline:none}
 @media (max-width:640px){
   header{left:20px;right:20px;flex-direction:column;gap:10px}
 }
+/* ---------- phone only ---------- */
+#touchZone{position:fixed;z-index:1;touch-action:none;display:none}
+#hintRing{position:fixed;width:64px;height:64px;margin:-32px 0 0 -32px;border-radius:50%;border:2px solid rgba(255,255,255,.85);pointer-events:none;z-index:2;display:none;animation:hintPulse 1.6s ease-out infinite}
+#hintRing.gone{display:none!important}
+@keyframes hintPulse{0%{transform:scale(.55);opacity:1}100%{transform:scale(1.35);opacity:0}}
+@media (hover:none) and (pointer:coarse){ #hintRing{display:block} }
+@media (prefers-reduced-motion:reduce){ #hintRing{animation:none;opacity:.8} }
 </style>
 </head>
 <body>
@@ -42,6 +49,9 @@ nav a:hover,nav a:focus-visible{border-bottom-color:currentColor;outline:none}
 
 
 <button id="tubeBtn" aria-label="Tip over the test tube"></button>
+<div id="touchZone" aria-hidden="true"></div>
+<div id="hintRing" aria-hidden="true"></div>
+<div id="hintText" class="say">tap the test tube</div>
 
 
 <script>
@@ -52,6 +62,11 @@ const btn = document.getElementById('tubeBtn');
 const quip = document.getElementById('quip');
 const catSay = document.getElementById('catSay');
 const basketSay = document.getElementById('basketSay');
+const touchZone = document.getElementById('touchZone');
+const hintRing = document.getElementById('hintRing');
+const hintText = document.getElementById('hintText');
+const isTouch = matchMedia('(hover: none) and (pointer: coarse)').matches;   // phones and tablets only
+let dragged = false;
 let wilt = 0, guilty = 0, BX = 0, BY = 0;
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const clamp = (v,a,b) => v<a?a:v>b?b:v;
@@ -501,6 +516,12 @@ function toggle(){
   tipped = !tipped; landT = -1;
   btn.setAttribute('aria-label', tipped ? 'Stand the test tube up' : 'Tip over the test tube');
   if (!tipped) pullUntil = performance.now() + 2600;
+  if (isTouch){
+    hintRing.classList.add('gone');
+    touchZone.style.display = tipped ? 'block' : 'none';   // only stop page scrolling while there's smell to drag
+    hintText.textContent = 'drag the smell around';
+    hintText.classList.toggle('show', tipped && !dragged);
+  }
 }
 btn.addEventListener('click', toggle);
 
@@ -510,8 +531,11 @@ function layout(){
   W = innerWidth; H = innerHeight;
   cvs.width = W*dpr; cvs.height = H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
   const narrow = W < 700;
-  F.w = Math.max(280, Math.min(1040, W*0.94, (H-56)/0.6));
-  F.h = F.w*0.6; F.x = (W-F.w)/2; F.y = (H-F.h)/2;
+  const phone = isTouch && narrow && H > W;   // portrait phone only
+  F.w = phone ? Math.min(1040, W*1.3, (H-56)/0.6)
+              : Math.max(280, Math.min(1040, W*0.94, (H-56)/0.6));
+  F.h = F.w*0.6; F.y = (H-F.h)/2;
+  F.x = phone ? W/2 - F.w*0.54 : (W-F.w)/2;   // phone: zoom in, keep plant, table and cat in view
   S = clamp(F.w/640, 0.35, 1.8);
   K = clamp(F.w/1000, 0.35, 1.1);
   TT = F.y + F.h*0.58; TX = F.x + F.w*0.44; TR = F.x + F.w*0.66;
@@ -522,6 +546,15 @@ function layout(){
   basketSay.style.left = BX+'px'; basketSay.style.top = (BY-54*S)+'px';
   btn.style.left = (TX+60*S)+'px'; btn.style.top = (TT+4)+'px';
   btn.style.width = (150*S)+'px'; btn.style.height = (80*S)+'px';
+  if (isTouch){
+    const tubeX = TX + HOLE*S;
+    hintRing.style.left = tubeX+'px'; hintRing.style.top = (TT-31*S)+'px';
+    hintText.style.left = tubeX+'px'; hintText.style.top = (TT-74*S)+'px';
+    if (!everClicked) hintText.classList.add('show');
+    touchZone.style.left = Math.max(0, F.x)+'px'; touchZone.style.top = F.y+'px';
+    touchZone.style.width = Math.min(W, F.w)+'px'; touchZone.style.height = F.h+'px';
+    btn.style.width = (190*S)+'px'; btn.style.height = (110*S)+'px';   // bigger tap target
+  }
   stain = document.createElement('canvas'); stain.width = W; stain.height = H; sctx = stain.getContext('2d');
   buildRoom(); buildSprigs();
 }
@@ -530,6 +563,7 @@ let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() 
 /* ---------- pointer ---------- */
 function setP(e){ P.x = e.clientX; P.y = e.clientY; if (!P.active){ P.px = P.x; P.py = P.y; } P.active = true; }
 addEventListener('pointermove', setP);
+touchZone.addEventListener('pointermove', () => { if (!dragged){ dragged = true; hintText.classList.remove('show'); } });
 addEventListener('pointerdown', setP);
 document.addEventListener('pointerleave', () => { P.active = false; });
 addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') P.active = false; });
